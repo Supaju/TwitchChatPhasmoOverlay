@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phasmophobia Radio Chat Overlay</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #chat { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 8px; }
+  .line { word-wrap: break-word; letter-spacing: 0.5px; animation: flicker-in 0.6s steps(1); }
+  .line.fade { animation: flicker-out 1s steps(1) forwards; }
+  /* failing-flashlight flicker, like the lights during a hunt */
+  @keyframes flicker-in { 0%,20%,45% { opacity: 0 } 10%,30%,60%,100% { opacity: 1 } 38% { opacity: .3 } }
+  @keyframes flicker-out { 0%,25%,50% { opacity: 1 } 15%,40% { opacity: .2 } 60%,100% { opacity: 0 } }
+  .name { cursor: default; }
+  .line img { height: 1.3em; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div id="chat"></div>
+<script src="config.js"></script> <!-- optional: your own overrides, see config.example.js -->
+<script>
+// ===================== CONFIG — edit freely =====================
+const CONFIG = {
+  channel: "yourchannel",    // Twitch channel (lowercase). Override with ?channel=name
+  fontSize: 28,                    // px (VT323 runs small, 28 reads like 24 in a normal font)
+  fontFamily: 'VT323, Consolas, "Courier New", monospace',
+  maxLines: 12,                    // lines kept on screen
+  fadeSeconds: 30,                 // seconds before a line fades out (0 = never fade)
+  ignoredUsers: ["nightbot", "streamelements", "streamlabs", "spotchbot"], // lowercase
+  gmTag: "<Host>",                 // tag shown before the broadcaster's name ("" = none)
+  modTag: "<Mod>",                 // tag shown before moderators' names ("" = none)
+  chatPrefix: "[Radio] ",          // prefix on regular chat lines (walkie-talkie)
+  modPrefix: "[Truck] ",           // prefix on moderator lines (the one watching the cameras)
+  joinMessage: "{name} has entered the investigation.",  // system line the first time someone chats ("" = none)
+  subMessage: "{name} has signed a contract.",  // system line for a new subscriber or gift recipient ("" = none)
+  colorCommand: "!color",        // chatters type "!color Banshee", "!color the twins", "!color #ff8800" or "!color reset" ("" disables)
+  colorAliases: { twins: "The Twins", mimic: "The Mimic" },  // short names accepted by the command (lowercase key -> ghost)
+  testIntervalMs: 2000,          // ?test=1 fake message interval
+  colors: {
+    chat: "#D8F5D0",               // chat text: pale CRT green-white
+    modText: "#7CE88A",            // moderator text: truck-monitor green
+    system: "#FFB347",             // join/sub lines: EMF amber
+    gm: "#FF3B30",                 // the broadcaster's tag (gmTag): REC red
+    mod: "#7CE88A",                // the moderators' tag (modTag)
+    ghosts: {                      // ghost types -> name colors (picked by hash, or with !color)
+      Spirit: "#BFD9FF", Wraith: "#9AA7B8", Phantom: "#E6E6FA", Poltergeist: "#FFD166",
+      Banshee: "#F7A1C4", Jinn: "#56C3F0", Mare: "#7B6CF6", Revenant: "#C0392B",
+      Shade: "#8E8E8E", Demon: "#FF4136", Yurei: "#A8E6CF", Oni: "#FF7F50",
+      Yokai: "#C77DFF", Hantu: "#7FDBFF", Goryo: "#4FC3A1", Myling: "#E0C3FC",
+      Onryo: "#FF6F91", "The Twins": "#FFC6FF", Raiju: "#FFF275", Obake: "#B5E48C",
+      "The Mimic": "#00F5D4", Moroi: "#9BF6FF", Deogen: "#F15BB5", Thaye: "#D4A373"
+    }
+  }
+};
+// ================================================================
+
+// Overrides from the optional config.js (USER_CONFIG). Objects (colors, ghosts, aliases) merge; arrays replace.
+function merge(base, over) {
+  for (const k in over)
+    base[k] = base[k] && typeof base[k] === "object" && !Array.isArray(base[k]) ? merge(base[k], over[k]) : over[k];
+  return base;
+}
+if (typeof USER_CONFIG !== "undefined") merge(CONFIG, USER_CONFIG);
+
+const params = new URLSearchParams(location.search);
+const channel = (params.get("channel") || CONFIG.channel).toLowerCase().replace(/^#/, "");
+const chat = document.getElementById("chat");
+chat.style.font = `${CONFIG.fontSize}px ${CONFIG.fontFamily}`;
+chat.style.textShadow = "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 2px 2px 3px #000, 0 0 8px rgba(124,232,138,.35)";  // outline + faint CRT glow
+
+const classColors = Object.values(CONFIG.colors.ghosts);
+const seen = new Set();
+
+function classColor(name) {
+  let h = 5381;
+  for (const c of name.toLowerCase()) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0;
+  return classColors[h % classColors.length];
+}
+
+// Per-user name colors set via the chat command; kept in OBS's browser storage so they survive restarts.
+let custom = {};
+try { custom = JSON.parse(localStorage.getItem("nameColors") || "{}"); } catch {}
+
+function colorCommand(login, text) {
+  const cmd = CONFIG.colorCommand.toLowerCase(), t = text.trim().toLowerCase();
+  if (!cmd || (t !== cmd && !t.startsWith(cmd + " "))) return false;
+  let arg = t.slice(cmd.length).trim();
+  arg = (Object.hasOwn(CONFIG.colorAliases, arg) ? CONFIG.colorAliases[arg] : arg).toLowerCase();
+  const cls = Object.entries(CONFIG.colors.ghosts).find(([k]) => k.toLowerCase() === arg);
+  if (/^#[0-9a-f]{6}$/.test(arg)) custom[login] = arg;
+  else if (cls) custom[login] = cls[1];
+  else if (arg === "reset") delete custom[login];
+  try { localStorage.setItem("nameColors", JSON.stringify(custom)); } catch {}
+  return true;                     // command lines are never shown, valid or not
+}
+
+function span(text, color, cls) {
+  const s = document.createElement("span");
+  s.textContent = text;            // textContent => no HTML injection possible
+  if (color) s.style.color = color;
+  if (cls) s.className = cls;
+  return s;
+}
+
+function addLine(...nodes) {
+  const line = document.createElement("div");
+  line.className = "line";
+  line.append(...nodes);
+  chat.append(line);
+  while (chat.children.length > CONFIG.maxLines) chat.firstChild.remove();
+  if (!CONFIG.fadeSeconds) return line;   // 0 = never fade; only maxLines removes lines
+  setTimeout(() => line.classList.add("fade"), CONFIG.fadeSeconds * 1000);
+  setTimeout(() => line.remove(), CONFIG.fadeSeconds * 1000 + 1000);
+  return line;
+}
+
+// Message text -> nodes, swapping emote ranges for <img>. Emote indices are code points.
+function buildMessage(text, emoteTag, color) {
+  const chars = Array.from(text);
+  const ranges = [];
+  for (const e of (emoteTag || "").split("/")) {
+    if (!e) continue;
+    const [id, pos] = e.split(":");
+    for (const r of pos.split(",")) {
+      const [a, b] = r.split("-").map(Number);
+      ranges.push({ id, a, b });
+    }
+  }
+  ranges.sort((x, y) => x.a - y.a);
+  const out = [];
+  let i = 0;
+  for (const { id, a, b } of ranges) {
+    if (a < i) continue;
+    if (a > i) out.push(span(chars.slice(i, a).join(""), color));
+    const img = document.createElement("img");
+    img.src = `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/default/dark/2.0`;
+    img.alt = chars.slice(a, b + 1).join("");
+    out.push(img);
+    i = b + 1;
+  }
+  if (i < chars.length) out.push(span(chars.slice(i).join(""), color));
+  return out;
+}
+
+function parseTags(raw) {
+  const tags = {};
+  for (const kv of raw.split(";")) {
+    const [k, ...v] = kv.split("=");
+    tags[k] = v.join("=").replace(/\\(.)/g, (_, c) => ({ s: " ", ":": ";", r: "\r", n: "\n" }[c] || c));
+  }
+  return tags;
+}
+
+function handleChat(tags, login, text) {
+  if (CONFIG.ignoredUsers.includes(login.toLowerCase())) return;
+  if (colorCommand(login, text)) return;
+  const badges = (tags.badges || "").split(",").map(b => b.split("/")[0]);
+  const name = tags["display-name"] || login;
+  const isGM = badges.includes("broadcaster");
+  const isOfficer = !isGM && (badges.includes("moderator") || badges.includes("lead_moderator"));
+  const color = isOfficer ? CONFIG.colors.modText : CONFIG.colors.chat;
+
+  if (!seen.has(login)) {
+    seen.add(login);
+    if (CONFIG.joinMessage) addLine(span(CONFIG.joinMessage.replaceAll("{name}", name), CONFIG.colors.system));
+  }
+  const m = text.match(/^\x01ACTION (.*)\x01$/);   // /me
+  const body = m ? m[1] : text;
+  const head = [span(isOfficer ? CONFIG.modPrefix : CONFIG.chatPrefix, color)];
+  if (isGM && CONFIG.gmTag) head.push(span(CONFIG.gmTag + " ", CONFIG.colors.gm, "gm"));
+  if (isOfficer && CONFIG.modTag) head.push(span(CONFIG.modTag + " ", CONFIG.colors.mod));
+  head.push(span(`[${name}]`, custom[login] || classColor(login), "name"), span(m ? " " : ": ", color));
+  const line = addLine(...head, ...buildMessage(body, m ? "" : tags.emotes, color));
+  line.dataset.id = tags.id || "";       // for CLEARMSG (single message deleted)
+  line.dataset.login = login;            // for CLEARCHAT (timeout / ban)
+}
+
+// Moderator removals. AutoMod-held messages never reach chat, so there is nothing to catch there.
+function removeLines(sel) { chat.querySelectorAll(sel).forEach(l => l.remove()); }
+
+let ws;
+function handleLine(line) {
+  if (line.startsWith("PING")) return ws && ws.send("PONG :tmi.twitch.tv");
+  let d = line.match(/^@(\S+) :tmi\.twitch\.tv CLEARMSG /);
+  if (d) { const id = parseTags(d[1])["target-msg-id"]; return id && removeLines(`.line[data-id="${CSS.escape(id)}"]`); }
+  d = line.match(/^(?:@\S+ )?:tmi\.twitch\.tv CLEARCHAT #\S+(?: :(\S+))?/);
+  if (d) return d[1] ? removeLines(`.line[data-login="${CSS.escape(d[1])}"]`) : (chat.textContent = "");
+  d = line.match(/^@(\S+) :tmi\.twitch\.tv USERNOTICE /);   // sub events
+  if (d) {
+    const t = parseTags(d[1]), id = t["msg-id"];
+    const who = id === "sub" ? t["display-name"] : /^(anon)?subgift$/.test(id) ? t["msg-param-recipient-display-name"] : "";
+    if (who && CONFIG.subMessage) addLine(span(CONFIG.subMessage.replaceAll("{name}", who), CONFIG.colors.system));
+    return;
+  }
+  const r = line.match(/^(?:@(\S+) )?:(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
+  if (r) handleChat(parseTags(r[1] || ""), r[2], r[3]);
+}
+
+function connect() {
+  ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+  ws.onopen = () => {
+    ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+    ws.send("PASS SCHMOOCHIES");
+    ws.send("NICK justinfan" + Math.floor(10000 + Math.random() * 89999));
+    ws.send("JOIN #" + channel);
+  };
+  ws.onmessage = e => e.data.split("\r\n").filter(Boolean).forEach(handleLine);
+  ws.onclose = () => setTimeout(connect, 3000);
+  ws.onerror = () => ws.close();
+}
+
+function startTest() {
+  // [user, badges, message, emotes]; plays in order, then loops
+  const script = [
+    ["TheStreamer", "broadcaster/1", "ok chat, Tanglewood. EMF is in my hand", ""],
+    ["SaltLineSally", "", "check the basement first", ""],
+    ["CrucifixCarl", "", "i heard a whisper on stream LUL", "425618:28-30"],
+    ["ModMorgan", "moderator/1", "reminder: no backseating the evidence", ""],
+    ["SpookyBean", "", "GHOST ORB on the camera!! NotLikeThis", "58765:26-36"],
+    ["TheStreamer", "broadcaster/1", "is it hunting? IS IT HUNTING", ""],
+    ["Wraithwatcher", "", "hide in the closet Kappa", "25:19-23"],
+    ["CrucifixCarl", "", "\x01ACTION lights a firelight\x01", ""],
+    ["SaltLineSally", "", "<b>html</b> is escaped", ""],
+  ];
+  let step = 0;
+  setInterval(() => {
+    const [n, b, msg, emotes] = script[step++ % script.length];
+    handleLine(`@badges=${b};display-name=${n};emotes=${emotes} :${n.toLowerCase()}!${n.toLowerCase()}@x.tmi.twitch.tv PRIVMSG #${channel} :${msg}`);
+  }, CONFIG.testIntervalMs);
+}
+
+if (params.get("test")) startTest(); else connect();
+</script>
+</body>
+</html>
