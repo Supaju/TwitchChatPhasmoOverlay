@@ -24,3 +24,10 @@ Everything else matches the WoW overlay: anonymous connection with reconnect, em
 ## Configuration
 
 Edit `config.js`; see the comments in `config.example.js`. `colors` and `colors.ghosts` merge, so you can override a single entry. `ignoredUsers` replaces the whole list. After editing, refresh the Browser Source in OBS.
+
+## More Twitch chat overlays
+
+Same engine, different games:
+
+- [World of Warcraft Guild Chat](https://github.com/Supaju/TwitchChatToWoWGuildChat): `[Guild] [Name]: message` in guild green with WoW class colors.
+- [Warframe Clan Chat](https://github.com/Supaju/TwitchChatWarframeOverlay): `[Clan] [Name]: message` in clan green with in-game timestamps and damage-type name colors.
