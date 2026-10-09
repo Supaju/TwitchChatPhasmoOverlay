@@ -34,8 +34,6 @@ const CONFIG = {
   modPrefix: "[Truck] ",           // prefix on moderator lines (the one watching the cameras)
   joinMessage: "{name} has entered the investigation.",  // system line the first time someone chats ("" = none)
   subMessage: "{name} has signed a contract.",  // system line for a new subscriber or gift recipient ("" = none)
-  colorCommand: "!color",        // chatters type "!color Banshee", "!color the twins", "!color #ff8800" or "!color reset" ("" disables)
-  colorAliases: { twins: "The Twins", mimic: "The Mimic" },  // short names accepted by the command (lowercase key -> ghost)
   testIntervalMs: 2000,          // ?test=1 fake message interval
   colors: {
     chat: "#D8F5D0",               // chat text: pale CRT green-white
@@ -43,19 +41,14 @@ const CONFIG = {
     system: "#FFB347",             // join/sub lines: EMF amber
     gm: "#FF3B30",                 // the broadcaster's tag (gmTag): REC red
     mod: "#7CE88A",                // the moderators' tag (modTag)
-    ghosts: {                      // ghost types -> name colors (picked by hash, or with !color)
-      Spirit: "#BFD9FF", Wraith: "#9AA7B8", Phantom: "#E6E6FA", Poltergeist: "#FFD166",
-      Banshee: "#F7A1C4", Jinn: "#56C3F0", Mare: "#7B6CF6", Revenant: "#C0392B",
-      Shade: "#8E8E8E", Demon: "#FF4136", Yurei: "#A8E6CF", Oni: "#FF7F50",
-      Yokai: "#C77DFF", Hantu: "#7FDBFF", Goryo: "#4FC3A1", Myling: "#E0C3FC",
-      Onryo: "#FF6F91", "The Twins": "#FFC6FF", Raiju: "#FFF275", Obake: "#B5E48C",
-      "The Mimic": "#00F5D4", Moroi: "#9BF6FF", Deogen: "#F15BB5", Thaye: "#D4A373"
-    }
+    streamerName: "#FF6F91",       // broadcaster's name: ghostly pink
+    modName: "#E53935",            // moderators' names: red
+    userName: "#5DADEC",           // everyone else's name: flashlight blue
   }
 };
 // ================================================================
 
-// Overrides from the optional config.js (USER_CONFIG). Objects (colors, ghosts, aliases) merge; arrays replace.
+// Overrides from the optional config.js (USER_CONFIG). Objects (colors) merge; arrays replace.
 function merge(base, over) {
   for (const k in over)
     base[k] = base[k] && typeof base[k] === "object" && !Array.isArray(base[k]) ? merge(base[k], over[k]) : over[k];
@@ -69,32 +62,7 @@ const chat = document.getElementById("chat");
 chat.style.font = `${CONFIG.fontSize}px ${CONFIG.fontFamily}`;
 chat.style.textShadow = "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 2px 2px 3px #000, 0 0 8px rgba(124,232,138,.35)";  // outline + faint CRT glow
 
-const classColors = Object.values(CONFIG.colors.ghosts);
 const seen = new Set();
-
-function classColor(name) {
-  let h = 5381;
-  for (const c of name.toLowerCase()) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0;
-  return classColors[h % classColors.length];
-}
-
-// Per-user name colors set via the chat command; kept in OBS's browser storage so they survive restarts.
-// All local-file Browser Sources share one storage, so the key is unique to this overlay (the WoW overlay uses "nameColors").
-let custom = {};
-try { custom = JSON.parse(localStorage.getItem("phasmoNameColors") || "{}"); } catch {}
-
-function colorCommand(login, text) {
-  const cmd = CONFIG.colorCommand.toLowerCase(), t = text.trim().toLowerCase();
-  if (!cmd || (t !== cmd && !t.startsWith(cmd + " "))) return false;
-  let arg = t.slice(cmd.length).trim();
-  arg = (Object.hasOwn(CONFIG.colorAliases, arg) ? CONFIG.colorAliases[arg] : arg).toLowerCase();
-  const cls = Object.entries(CONFIG.colors.ghosts).find(([k]) => k.toLowerCase() === arg);
-  if (/^#[0-9a-f]{6}$/.test(arg)) custom[login] = arg;
-  else if (cls) custom[login] = cls[1];
-  else if (arg === "reset") delete custom[login];
-  try { localStorage.setItem("phasmoNameColors", JSON.stringify(custom)); } catch {}
-  return true;                     // command lines are never shown, valid or not
-}
 
 function span(text, color, cls) {
   const s = document.createElement("span");
@@ -155,7 +123,6 @@ function parseTags(raw) {
 
 function handleChat(tags, login, text) {
   if (CONFIG.ignoredUsers.includes(login.toLowerCase())) return;
-  if (colorCommand(login, text)) return;
   const badges = (tags.badges || "").split(",").map(b => b.split("/")[0]);
   const name = tags["display-name"] || login;
   const isGM = badges.includes("broadcaster");
@@ -171,7 +138,7 @@ function handleChat(tags, login, text) {
   const head = [span(isOfficer ? CONFIG.modPrefix : CONFIG.chatPrefix, color)];
   if (isGM && CONFIG.gmTag) head.push(span(CONFIG.gmTag + " ", CONFIG.colors.gm, "gm"));
   if (isOfficer && CONFIG.modTag) head.push(span(CONFIG.modTag + " ", CONFIG.colors.mod));
-  head.push(span(`[${name}]`, custom[login] || classColor(login), "name"), span(m ? " " : ": ", color));
+  head.push(span(`[${name}]`, isGM ? CONFIG.colors.streamerName : isOfficer ? CONFIG.colors.modName : CONFIG.colors.userName, "name"), span(m ? " " : ": ", color));
   const line = addLine(...head, ...buildMessage(body, m ? "" : tags.emotes, color));
   line.dataset.id = tags.id || "";       // for CLEARMSG (single message deleted)
   line.dataset.login = login;            // for CLEARCHAT (timeout / ban)

@@ -8,7 +8,7 @@ A single-file OBS Browser Source that shows your live Twitch chat as Phasmophobi
 
 - **Walkie-talkie lines:** `[Radio] [Name]: message` in pale CRT green-white. Moderators talk from the `[Truck] <Mod>` (the one watching the cameras) in monitor green.
 - **Broadcaster:** `<Host>` tag in REC red.
-- **Name colors are ghost types:** each chatter is hashed to one of the 24 ghost types' colors. Chatters pick their own with `!color Banshee`, `!color the twins` (or `twins`, `mimic`), `!color #ff8800`, or `!color reset`.
+- **Name colors by role:** the streamer's name is pink, moderators' names are red, everyone else is blue.
 - **System lines** in EMF amber: `Name has entered the investigation.` on first message, `Name has signed a contract.` on a sub/gift sub.
 - **Flicker:** lines flicker in and out like the lights during a hunt, instead of a plain fade.
 - **Font:** VT323 (Google Fonts), a CRT terminal face like the truck's monitors. Falls back to Consolas/Courier if offline.
@@ -23,7 +23,7 @@ Everything else matches the WoW overlay: anonymous connection with reconnect, em
 
 ## Configuration
 
-Edit `config.js`; see the comments in `config.example.js`. `colors` and `colors.ghosts` merge, so you can override a single entry. `ignoredUsers` replaces the whole list. After editing, refresh the Browser Source in OBS.
+Edit `config.js`; see the comments in `config.example.js`. `colors` merges, so you can override a single entry. `ignoredUsers` replaces the whole list. After editing, refresh the Browser Source in OBS.
 
 ## More Twitch chat overlays
 
